@@ -13,13 +13,26 @@ find_package(SQLite3 REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
+# CMake's FindSQLite3 module has used both names across distributions and
+# releases. Prefer imported targets, then retain a variable-based fallback.
+if(TARGET SQLite3::SQLite3)
+    set(VERSIONFS_SQLITE_TARGET SQLite3::SQLite3)
+elseif(TARGET SQLite::SQLite3)
+    set(VERSIONFS_SQLITE_TARGET SQLite::SQLite3)
+else()
+    add_library(versionfs_sqlite INTERFACE)
+    target_include_directories(versionfs_sqlite INTERFACE ${SQLite3_INCLUDE_DIRS})
+    target_link_libraries(versionfs_sqlite INTERFACE ${SQLite3_LIBRARIES})
+    set(VERSIONFS_SQLITE_TARGET versionfs_sqlite)
+endif()
+
 add_library(versionfs_core
     src/control.cpp
     src/repository.cpp
     src/util.cpp
 )
 target_include_directories(versionfs_core PUBLIC include)
-target_link_libraries(versionfs_core PUBLIC SQLite3::SQLite3 OpenSSL::Crypto Threads::Threads)
+target_link_libraries(versionfs_core PUBLIC ${VERSIONFS_SQLITE_TARGET} OpenSSL::Crypto Threads::Threads)
 target_compile_options(versionfs_core PRIVATE -Wall -Wextra -Wpedantic)
 if(VERSIONFS_ENABLE_FAULT_INJECTION)
     target_compile_definitions(versionfs_core PUBLIC VERSIONFS_ENABLE_FAULT_INJECTION=1)
