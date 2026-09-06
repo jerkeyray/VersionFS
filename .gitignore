@@ -1,0 +1,25 @@
+# CMake and compiler output
+/build/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+*.o
+*.a
+*.so
+*.dylib
+
+# Local/editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Coverage and sanitizer output
+*.gcda
+*.gcno
+*.profraw
+*.profdata
