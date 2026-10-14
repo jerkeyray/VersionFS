@@ -167,7 +167,11 @@ def state():
     if Config.step_file and os.path.exists(Config.step_file):
         with open(Config.step_file) as f:
             step = f.read().strip()
-    return {"step": step, "folder": top,
+    control = os.path.dirname(Config.step_file) if Config.step_file else ""
+    steps_path = os.path.join(control, "steps.txt")
+    steps = open(steps_path).read().split("\n")[:-1] if control and os.path.exists(steps_path) else []
+    waiting = bool(control) and os.path.exists(os.path.join(control, "waiting"))
+    return {"step": step, "steps": steps, "waiting": waiting, "folder": top,
             "session": {"label": session["label"], "status": session["status"]} if session else None,
             "files": files, "feed": feed}
 
@@ -184,6 +188,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def do_POST(self):
+        # The demo's Next button: the demo script waits for this file between steps.
+        if urlparse(self.path).path == "/api/next" and Config.step_file:
+            control = os.path.dirname(Config.step_file)
+            if os.path.exists(os.path.join(control, "waiting")):
+                open(os.path.join(control, "next"), "w").close()
+            self.send(200, "{}")
+        else:
+            self.send(404, "{}")
 
     def do_GET(self):
         url = urlparse(self.path)

@@ -4,7 +4,8 @@
 # what; then the agent's session is undone and the developer's work is kept.
 #
 # Usage: visual_demo.sh <build-dir>
-# Press Enter to advance. AUTO=1 advances by itself (STEP_DELAY seconds, default 3);
+# Advance with the Next button on the live page (or Enter in the terminal).
+# AUTO=1 advances by itself (STEP_DELAY seconds, default 3);
 # HOLD=N keeps the live view up for N seconds at the end.
 set -euo pipefail
 
@@ -16,6 +17,8 @@ src="$root/source"
 mnt="$root/mount"
 project="$mnt/project"
 step_file="$root/step.txt"
+next_file="$root/next"        # created by the live page's Next button
+wait_file="$root/waiting"     # present while the demo waits for Next
 total=5
 
 cleanup() {
@@ -33,8 +36,14 @@ step() {  # step <n> <text>: terminal heading + browser banner
   banner "$1/$total|$2"
 }
 note() { printf '      %s\n' "$1"; banner "$2|$1"; }
-pause() {
-  if [[ -n "${AUTO:-}" ]]; then sleep "${STEP_DELAY:-3}"; else read -r -p "${dim}      press Enter to continue${off} " _; fi
+pause() {  # wait for the page's Next button or Enter in the terminal
+  if [[ -n "${AUTO:-}" ]]; then sleep "${STEP_DELAY:-3}"; return; fi
+  printf '%s      next: click Next on the page (or press Enter here)%s\n' "$dim" "$off"
+  rm -f "$next_file"; touch "$wait_file"
+  while [[ ! -e "$next_file" ]]; do
+    if [[ -t 0 ]]; then read -r -t 0.3 _ && break; else sleep 0.3; fi
+  done
+  rm -f "$next_file" "$wait_file"
 }
 run() { printf '%s      $ versionfsctl %s%s\n' "$dim" "$*" "$off"; "$ctl" --source "$src" "$@" | sed 's/^/      /'; }
 
@@ -44,6 +53,7 @@ mkdir -p "$src" "$mnt"
 daemon=$!
 for _ in $(seq 1 50); do [[ -S "$src/.versionfs/control.sock" ]] && break; sleep 0.1; done
 banner "Starting"
+printf '%s\n' "Setup" "Agent works" "Agent's changes" "Preview undo" "Undo" > "$root/steps.txt"
 python3 "$here/viz/server.py" --source "$src" --ctl "$ctl" --port 8080 --step-file "$step_file" --outside-label developer >/dev/null 2>&1 &
 viz=$!
 
@@ -94,6 +104,4 @@ printf '      %-11s %s\n' "main.c" "$(cat "$project/main.c")" "utils.c" "$(cat "
 printf '      %s\n' "files: $(cd "$project" && ls -A | tr '\n' ' ')"
 banner "Done|The agent's changes are reverted; the developer's utils.c fix and shared.txt are kept"
 
-if [[ -n "${HOLD:-}" ]]; then sleep "$HOLD"; else
-  read -r -p "${dim}      press Enter to finish${off} " _
-fi
+if [[ -n "${HOLD:-}" ]]; then sleep "$HOLD"; else pause; fi

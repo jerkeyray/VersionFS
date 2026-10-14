@@ -29,6 +29,7 @@ url="http://localhost:$port"
 (
   for _ in $(seq 1 180); do
     if curl -fs "$url/api/state" >/dev/null 2>&1; then
+      [[ -n "${NO_OPEN:-}" ]] && exit 0
       if command -v open >/dev/null; then open "$url"; elif command -v xdg-open >/dev/null; then xdg-open "$url"; fi
       exit 0
     fi

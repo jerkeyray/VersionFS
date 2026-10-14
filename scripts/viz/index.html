@@ -12,7 +12,17 @@
   .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
   header { display: flex; align-items: center; gap: 20px; padding: 22px 40px; border-bottom: 2px solid var(--ink); }
   header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
-  header .session { margin-left: auto; color: var(--muted); font-size: 16px; }
+  header .session { color: var(--muted); font-size: 15px; }
+  .rail { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+  .rail .s { display: flex; align-items: center; gap: 8px; color: #a0a0a0; font-size: 15px; white-space: nowrap; }
+  .rail .s i { font: normal 600 13px "JetBrains Mono", monospace; width: 26px; height: 26px; display: grid; place-items: center; border: 1.5px solid #b5b5b5; border-radius: 50%; }
+  .rail .s.done { color: var(--ink); }
+  .rail .s.done i { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+  .rail .s.now { color: var(--ink); font-weight: 600; }
+  .rail .s.now i { border: 2.5px solid var(--ink); color: var(--ink); }
+  .rail .sep { width: 22px; height: 1.5px; background: #c8c8c8; }
+  #next { margin-left: 28px; font: 600 17px Inter, sans-serif; padding: 12px 26px; background: var(--ink); color: var(--paper); border: none; cursor: pointer; min-width: 150px; }
+  #next:disabled { background: #d8d8d8; color: #8a8a8a; cursor: default; }
   header .session b { color: var(--ink); }
   .banner { display: none; align-items: baseline; gap: 24px; padding: 20px 40px; background: var(--ink); color: var(--paper); }
   .banner .n { font: 600 14px "JetBrains Mono", monospace; letter-spacing: 2px; color: #a3a3a3; white-space: nowrap; }
@@ -41,6 +51,8 @@
 <header>
   <h1>VersionFS</h1>
   <span class="session" id="session"></span>
+  <div class="rail" id="rail"></div>
+  <button id="next" disabled onclick="next()">Next →</button>
 </header>
 <div class="banner" id="banner"><span class="n" id="banner-n"></span><span class="text" id="banner-text"></span></div>
 <main>
@@ -61,7 +73,23 @@ const clock = ns => new Date(ns / 1e6).toLocaleTimeString([], {hour12: false});
 const list = ps => ps.length <= 3 ? ps.map(p => `<b>${esc(p)}</b>`).join(", ")
                                   : ps.slice(0, 2).map(p => `<b>${esc(p)}</b>`).join(", ") + ` and ${ps.length - 2} more`;
 
+async function next() {
+  const button = document.getElementById("next");
+  if (button.disabled) return;
+  button.disabled = true;
+  await fetch("/api/next", {method: "POST"});
+}
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowRight" || e.key === " " || e.key === "Enter") { e.preventDefault(); next(); }
+});
+
 function render(s) {
+  const n = s.step.split("|")[0], current = /^\d/.test(n) ? parseInt(n) : (n === "Done" ? s.steps.length + 1 : 0);
+  document.getElementById("rail").innerHTML = s.steps.map((label, i) =>
+    `${i ? '<span class="sep"></span>' : ""}<span class="s ${i + 1 < current ? "done" : i + 1 === current ? "now" : ""}"><i>${i + 1}</i>${esc(label)}</span>`).join("");
+  const button = document.getElementById("next");
+  button.disabled = !s.waiting;
+  button.textContent = !s.waiting ? "running…" : current > s.steps.length ? "Finish" : "Next →";
   const banner = document.getElementById("banner");
   if (s.step) {
     const [n, text] = s.step.includes("|") ? s.step.split("|", 2) : ["", s.step];
@@ -74,12 +102,15 @@ function render(s) {
     ? `session <b>${esc(s.session.label)}</b> · ${esc(s.session.status)}` : "no session yet";
   document.getElementById("files-title").textContent = s.folder ? `Files in ${s.folder}/` : "Files";
 
+  // In the guided demo the per-file undo plan is revealed at the "Preview undo" step.
+  const previewAt = s.steps.indexOf("Preview undo") + 1;
+  const showPlan = !previewAt || current >= previewAt;
   document.getElementById("files").innerHTML = s.files.length ? s.files.map(f => {
     const key = f.path, sig = f.verb + (f.who ? f.who.text : "") + f.present + f.plan;
     const changed = seen.files[key] !== undefined && seen.files[key] !== sig;
     seen.files[key] = sig;
     const status = f.who ? `${esc(f.verb)} by ${badge(f.who)}` : "unchanged";
-    const plan = f.plan ? `<span class="plan ${f.plan.startsWith("kept") ? "keep" : ""}">${esc(f.plan)}</span>` : "<span></span>";
+    const plan = f.plan && showPlan ? `<span class="plan ${f.plan.startsWith("kept") ? "keep" : ""}">${esc(f.plan)}</span>` : "<span></span>";
     return `<div class="row ${f.present ? "" : "gone"} ${changed ? "flash" : ""}">
       <span class="name">${esc(f.name)}${f.link ? " →" : ""}</span><span class="status">${status}</span>${plan}</div>`;
   }).join("") : `<p class="empty">No files yet.</p>`;
