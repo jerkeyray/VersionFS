@@ -42,7 +42,7 @@ trap 'kill "$opener" 2>/dev/null || true' EXIT
 echo "Live view: $url (opens automatically)"
 tty=-i; [[ -t 0 && -t 1 ]] && tty=-it
 docker run --rm $tty --privileged --device /dev/fuse -p "$port:8080" -v "$PWD":/src:ro \
-  -e AUTO -e STEP_DELAY -e HOLD versionfs-dev bash -c '
+  -e AUTO -e STEP_DELAY -e HOLD -e DEMO_URL="$url" versionfs-dev bash -c '
   echo "Building VersionFS..."
   cmake -S /src -B /tmp/build -DCMAKE_BUILD_TYPE=Release >/dev/null &&
   cmake --build /tmp/build -j >/dev/null 2>&1 || { echo "build failed"; exit 1; }
