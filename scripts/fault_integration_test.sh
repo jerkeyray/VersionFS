@@ -49,9 +49,13 @@ for point in after-temp-sync after-object-publish after-metadata-commit before-l
   stop_daemon
 
   start_daemon "$point"
-  printf 'candidate\n' > "$mount_dir/report.txt" || true
+  # Append (O_WRONLY, no O_TRUNC) so every crash point sits on the first-write snapshot path,
+  # before any byte of the live file has changed.
+  printf 'candidate\n' >> "$mount_dir/report.txt" || true
   wait "$pid" || [[ $? -eq 86 ]]
   pid=""
+  # A crashed FUSE daemon leaves its mount attached but dead (ENOTCONN); detach it lazily.
+  fusermount3 -uz "$mount_dir" 2>/dev/null || true
 
   start_daemon
   [[ $(cat "$mount_dir/report.txt") == "base" ]]

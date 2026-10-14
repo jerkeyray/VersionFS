@@ -29,6 +29,13 @@ int main(int argc, char* argv[]) {
     }
     if (source.empty() || mount.empty()) { usage(); return 2; }
     try {
+        std::error_code probe;
+        (void)std::filesystem::status(mount, probe);
+        if (probe == std::errc::not_connected) {
+            std::cerr << "versionfs: " << mount << " is a stale mount from a crashed daemon; "
+                      << "run `fusermount3 -u " << mount << "` first\n";
+            return 1;
+        }
         const auto canonicalSource = std::filesystem::weakly_canonical(source);
         const auto canonicalMount = std::filesystem::weakly_canonical(mount);
         const auto sourceText = canonicalSource.generic_string() + "/";

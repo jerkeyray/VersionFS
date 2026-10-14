@@ -3,9 +3,11 @@
 #include <openssl/evp.h>
 
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <fcntl.h>
+#include <fstream>
 #include <iomanip>
 #include <random>
 #include <sstream>
@@ -41,9 +43,13 @@ std::filesystem::path backingPath(const std::filesystem::path& root,
 }
 
 std::string randomId() {
+    // Seed once per thread: a fresh std::random_device per id cost 16 getrandom() syscalls.
+    thread_local std::mt19937_64 random{(std::uint64_t{std::random_device{}()} << 32) ^ std::random_device{}()};
     std::array<unsigned char, 16> bytes{};
-    std::random_device random;
-    for (auto& byte : bytes) byte = static_cast<unsigned char>(random());
+    for (std::size_t i = 0; i < bytes.size(); i += 8) {
+        const std::uint64_t value = random();
+        for (std::size_t j = 0; j < 8; ++j) bytes[i + j] = static_cast<unsigned char>(value >> (8 * j));
+    }
     bytes[6] = static_cast<unsigned char>((bytes[6] & 0x0fU) | 0x40U);
     bytes[8] = static_cast<unsigned char>((bytes[8] & 0x3fU) | 0x80U);
     std::ostringstream out;
@@ -61,36 +67,49 @@ std::int64_t nowNanoseconds() {
         .count();
 }
 
-std::string sha256File(const std::filesystem::path& path) {
-    int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
-    if (fd < 0) throw std::runtime_error("cannot open object for checksum");
-    EVP_MD_CTX* context = EVP_MD_CTX_new();
-    if (!context) {
-        ::close(fd);
+Sha256::Sha256() : context_(EVP_MD_CTX_new()) {
+    if (!context_ || EVP_DigestInit_ex(static_cast<EVP_MD_CTX*>(context_), EVP_sha256(), nullptr) != 1) {
+        EVP_MD_CTX_free(static_cast<EVP_MD_CTX*>(context_));
         throw std::runtime_error("cannot create SHA-256 context");
     }
-    std::array<unsigned char, 64 * 1024> buffer{};
+}
+
+Sha256::~Sha256() { EVP_MD_CTX_free(static_cast<EVP_MD_CTX*>(context_)); }
+
+void Sha256::update(const void* data, std::size_t size) {
+    if (EVP_DigestUpdate(static_cast<EVP_MD_CTX*>(context_), data, size) != 1)
+        throw std::runtime_error("cannot calculate SHA-256 checksum");
+}
+
+std::string Sha256::hex() {
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned int digestLength = 0;
-    bool ok = EVP_DigestInit_ex(context, EVP_sha256(), nullptr) == 1;
-    while (ok) {
-        const ssize_t count = ::read(fd, buffer.data(), buffer.size());
-        if (count == 0) break;
-        if (count < 0) {
-            if (errno == EINTR) continue;
-            ok = false;
-            break;
-        }
-        ok = EVP_DigestUpdate(context, buffer.data(), static_cast<std::size_t>(count)) == 1;
-    }
-    ok = ok && EVP_DigestFinal_ex(context, digest, &digestLength) == 1;
-    EVP_MD_CTX_free(context);
-    ::close(fd);
-    if (!ok) throw std::runtime_error("cannot calculate SHA-256 checksum");
+    if (EVP_DigestFinal_ex(static_cast<EVP_MD_CTX*>(context_), digest, &digestLength) != 1)
+        throw std::runtime_error("cannot calculate SHA-256 checksum");
     std::ostringstream out;
     out << std::hex << std::setfill('0');
     for (unsigned int i = 0; i < digestLength; ++i) out << std::setw(2) << unsigned(digest[i]);
     return out.str();
+}
+
+std::string sha256File(const std::filesystem::path& path) {
+    int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) throw std::runtime_error("cannot open object for checksum");
+    try {
+        Sha256 hash;
+        std::array<unsigned char, 64 * 1024> buffer{};
+        while (true) {
+            const ssize_t count = ::read(fd, buffer.data(), buffer.size());
+            if (count == 0) break;
+            if (count < 0) {
+                if (errno == EINTR) continue;
+                throw std::runtime_error("cannot read object for checksum");
+            }
+            hash.update(buffer.data(), static_cast<std::size_t>(count));
+        }
+        ::close(fd);
+        return hash.hex();
+    } catch (...) { ::close(fd); throw; }
 }
 
 std::string formatTimestamp(std::int64_t nanoseconds) {
@@ -109,6 +128,35 @@ void crashIfRequested(const char* point) {
 #else
     (void)point;
 #endif
+}
+
+std::optional<ProcessInfo> readProcess(int pid) {
+    if (pid <= 0) return std::nullopt;
+    std::ifstream input("/proc/" + std::to_string(pid) + "/stat");
+    std::string line;
+    if (!input || !std::getline(input, line)) return std::nullopt;
+    // Format: pid (comm) state ppid ... ; comm may itself contain spaces or ')'.
+    const auto open = line.find('(');
+    const auto close = line.rfind(')');
+    if (open == std::string::npos || close == std::string::npos || close < open) return std::nullopt;
+    ProcessInfo info;
+    info.pid = pid;
+    info.name = line.substr(open + 1, close - open - 1);
+    std::istringstream fields(line.substr(close + 2));
+    std::string field;
+    for (int index = 3; fields >> field; ++index) {
+        if (index == 4) info.ppid = std::stoi(field);
+        if (index == 22) { info.startTime = std::stoull(field); break; }
+    }
+    return info;
+}
+
+int threadGroupOf(int tid) {
+    std::ifstream input("/proc/" + std::to_string(tid) + "/status");
+    std::string line;
+    while (std::getline(input, line))
+        if (line.rfind("Tgid:", 0) == 0) return std::stoi(line.substr(5));
+    return tid;
 }
 
 }  // namespace versionfs

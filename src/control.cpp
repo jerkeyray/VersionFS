@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -96,6 +97,25 @@ void writeFrame(int fd, const std::string& payload) {
     if (!payload.empty()) writeAll(fd, payload.data(), payload.size());
 }
 
+// Ask the kernel who connected rather than trusting anything in the request payload.
+ControlPeer peerOf(int fd) {
+    ControlPeer peer;
+#ifdef SO_PEERCRED
+    ucred credentials{};
+    socklen_t length = sizeof(credentials);
+    if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credentials, &length) != 0)
+        throw std::runtime_error("cannot read control peer credentials");
+    peer.pid = credentials.pid;
+    peer.uid = credentials.uid;
+#else
+    uid_t uid{};
+    gid_t gid{};
+    if (::getpeereid(fd, &uid, &gid) != 0) throw std::runtime_error("cannot read control peer credentials");
+    peer.uid = uid;
+#endif
+    return peer;
+}
+
 sockaddr_un socketAddress(const std::filesystem::path& path) {
     sockaddr_un address{};
     address.sun_family = AF_UNIX;
@@ -154,7 +174,12 @@ void ControlServer::run() {
         if (stopping_) { ::close(client); break; }
         try {
             ControlResponse response;
-            try { response = handler_(decodeArguments(readFrame(client))); }
+            try {
+                const ControlPeer peer = peerOf(client);
+                if (peer.uid != ::geteuid() && peer.uid != 0)
+                    throw std::runtime_error("control client is not the filesystem owner");
+                response = handler_(peer, decodeArguments(readFrame(client)));
+            }
             catch (const std::exception& error) { response = {false, error.what()}; }
             std::string frame(1, response.ok ? '\1' : '\0');
             frame += response.payload;

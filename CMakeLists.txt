@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(VersionFS VERSION 0.1.0 LANGUAGES CXX)
+project(VersionFS VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -61,6 +61,8 @@ if(VERSIONFS_BUILD_TESTS)
     enable_testing()
     add_executable(versionfs_unit_tests tests/unit_tests.cpp)
     target_link_libraries(versionfs_unit_tests PRIVATE versionfs_core)
+    # The tests are assert-based; keep assertions active in Release builds too.
+    target_compile_options(versionfs_unit_tests PRIVATE -UNDEBUG)
     add_test(NAME versionfs_unit_tests COMMAND versionfs_unit_tests)
 endif()
 
